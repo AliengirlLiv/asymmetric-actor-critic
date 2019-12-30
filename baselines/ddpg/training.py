@@ -182,10 +182,10 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
             # Log stats.
             epoch_train_duration = time.time() - epoch_start_time
             duration = time.time() - start_time
-            stats = agent.get_stats()
+            # stats = agent.get_stats() # TODO: add bback in
             combined_stats = {}
-            for key in sorted(stats.keys()):
-                combined_stats[key] = mpi_mean(stats[key])
+            # for key in sorted(stats.keys()): # TODO: add back in
+            #     combined_stats[key] = mpi_mean(stats[key])
 
             # Rollout statistics.
             combined_stats['rollout/return'] = mpi_mean(epoch_episode_rewards)

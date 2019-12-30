@@ -162,7 +162,7 @@ class DDPG(object):
         self.setup_stats()
         self.setup_target_network_updates()
 
-        self.setup_actor_optimizer() # TODO: figure out why this adds so many new vars to self.actor.vars
+        self.setup_actor_optimizer()
         self.setup_critic_optimizer()
 
     def setup_target_network_updates(self):
