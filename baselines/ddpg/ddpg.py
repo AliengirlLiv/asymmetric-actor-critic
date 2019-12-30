@@ -1,4 +1,5 @@
 from copy import copy
+from copy import deepcopy
 from functools import reduce
 
 import numpy as np
@@ -6,7 +7,7 @@ import tensorflow as tf
 import tensorflow.contrib as tc
 
 from baselines import logger
-from baselines.common.mpi_adam import MpiAdam
+# from baselines.common.mpi_adam import MpiAdam
 import baselines.common.tf_util as U
 from baselines.common.mpi_running_mean_std import RunningMeanStd
 from baselines.ddpg.util import reduce_std, mpi_mean
@@ -134,13 +135,6 @@ class DDPG(object):
         else:
             self.ret_rms = None
 
-        # Create target networks.
-        target_actor = copy(actor)
-        target_actor.name = 'target_actor'
-        self.target_actor = target_actor
-        target_critic = copy(critic)
-        target_critic.name = 'target_critic'
-        self.target_critic = target_critic
 
         # Create networks and core TF parts that are shared across setup parts.
         self.actor_tf = actor(normalized_obs0, normalized_goalobs) # TODO: [?, 4]
@@ -148,14 +142,26 @@ class DDPG(object):
         self.critic_tf = denormalize(tf.clip_by_value(self.normalized_critic_tf, self.return_range[0], self.return_range[1]), self.ret_rms)
         self.normalized_critic_with_actor_tf = critic(normalized_state0, normalized_goal, self.actor_tf, reuse=True)
         self.critic_with_actor_tf = denormalize(tf.clip_by_value(self.normalized_critic_with_actor_tf, self.return_range[0], self.return_range[1]), self.ret_rms)
+
+
+
+        # Create target networks.
+        self.setup_actor_optimizer() # TODO: figure out why this adds so many new vars to self.actor.vars
+        self.setup_critic_optimizer()
+        target_actor = deepcopy(actor)
+        # target_actor.name = 'target_actor'
+        self.target_actor = target_actor
+        target_critic = deepcopy(critic)
+        # target_critic.name = 'target_critic'
+        self.target_critic = target_critic
+
+
         Q_obs1 = denormalize(target_critic(normalized_state1, normalized_goal, target_actor(normalized_obs1, normalized_goalobs)), self.ret_rms)
         self.target_Q = self.rewards + (1. - self.terminals1) * gamma * Q_obs1
 
         # Set up parts.
         if self.param_noise is not None:
             self.setup_param_noise(normalized_obs0)
-        self.setup_actor_optimizer()
-        self.setup_critic_optimizer()
         if self.normalize_returns and self.enable_popart:
             self.setup_popart()
         self.setup_stats()
@@ -184,16 +190,16 @@ class DDPG(object):
         self.perturb_adaptive_policy_ops = get_perturbed_actor_updates(self.actor, adaptive_param_noise_actor, self.param_noise_stddev)
         self.adaptive_policy_distance = tf.sqrt(tf.reduce_mean(tf.square(self.actor_tf - adaptive_actor_tf)))
 
-    def setup_actor_optimizer(self):
+    def setup_actor_optimizer(self): # TODO: HTIS IS ADDING VARS TO SELF.ACTOR, NOT SELF.TARGET_ACTOR
         logger.info('setting up actor optimizer')
         self.actor_loss = -tf.reduce_mean(self.critic_with_actor_tf)
-        actor_shapes = [var.get_shape().as_list() for var in self.actor.trainable_vars]
-        actor_nb_params = sum([reduce(lambda x, y: x * y, shape) for shape in actor_shapes])
-        logger.info('  actor shapes: {}'.format(actor_shapes))
-        logger.info('  actor params: {}'.format(actor_nb_params))
-        self.actor_grads = U.flatgrad(self.actor_loss, self.actor.trainable_vars, clip_norm=self.clip_norm)
-        self.actor_optimizer = MpiAdam(var_list=self.actor.trainable_vars,
-            beta1=0.9, beta2=0.999, epsilon=1e-08)
+        # actor_shapes = [var.get_shape().as_list() for var in self.actor.trainable_vars]
+        # actor_nb_params = sum([reduce(lambda x, y: x * y, shape) for shape in actor_shapes])
+        # logger.info('  actor shapes: {}'.format(actor_shapes))
+        # logger.info('  actor params: {}'.format(actor_nb_params))
+        # self.actor_grads = U.flatgrad(self.actor_loss, self.actor.trainable_vars, clip_norm=self.clip_norm)
+        self.actor_optimizer = tf.train.AdamOptimizer(beta1=0.9, beta2=0.999, epsilon=1e-08)
+        self.actor_train_op = self.actor_optimizer.minimize(self.actor_loss)
 
     def setup_critic_optimizer(self):
         logger.info('setting up critic optimizer')
@@ -209,13 +215,13 @@ class DDPG(object):
                 weights_list=critic_reg_vars
             )
             self.critic_loss += critic_reg
-        critic_shapes = [var.get_shape().as_list() for var in self.critic.trainable_vars]
-        critic_nb_params = sum([reduce(lambda x, y: x * y, shape) for shape in critic_shapes])
-        logger.info('  critic shapes: {}'.format(critic_shapes))
-        logger.info('  critic params: {}'.format(critic_nb_params))
-        self.critic_grads = U.flatgrad(self.critic_loss, self.critic.trainable_vars, clip_norm=self.clip_norm)
-        self.critic_optimizer = MpiAdam(var_list=self.critic.trainable_vars,
-            beta1=0.9, beta2=0.999, epsilon=1e-08)
+        # critic_shapes = [var.get_shape().as_list() for var in self.critic.trainable_vars]
+        # critic_nb_params = sum([reduce(lambda x, y: x * y, shape) for shape in critic_shapes])
+        # logger.info('  critic shapes: {}'.format(critic_shapes))
+        # logger.info('  critic params: {}'.format(critic_nb_params))
+        # self.critic_grads = U.flatgrad(self.critic_loss, self.critic.trainable_vars, clip_norm=self.clip_norm)
+        self.critic_optimizer = tf.train.AdamOptimizer(beta1=0.9, beta2=0.999, epsilon=1e-08)
+        self.critic_train_op = self.critic_optimizer.minimize(self.critic_loss)
 
     def setup_popart(self):
         # See https://arxiv.org/pdf/1602.07714.pdf for details.
@@ -337,8 +343,8 @@ class DDPG(object):
             })
 
         # Get all gradients and perform a synced update.
-        ops = [self.actor_grads, self.actor_loss, self.critic_grads, self.critic_loss]
-        actor_grads, actor_loss, critic_grads, critic_loss = self.sess.run(ops, feed_dict={
+        ops = [self.actor_train_op, self.actor_loss, self.critic_train_op, self.critic_loss]
+        _, actor_loss, _, critic_loss = self.sess.run(ops, feed_dict={
             self.obs0: batch['obs0'],
             self.state0: batch['state0'],
             self.goalobs: batch['goalobs'],
@@ -347,16 +353,16 @@ class DDPG(object):
             self.critic_target: target_Q,
         }) # TODO: Make this part less slow
         
-        self.actor_optimizer.update(actor_grads, stepsize=self.actor_lr)  # TODO: Make this part less slow
-        self.critic_optimizer.update(critic_grads, stepsize=self.critic_lr) # TODO: weirdly, this is okay
+        # self.actor_optimizer.update(actor_grads, stepsize=self.actor_lr)  # TODO: Make this part less slow
+        # self.critic_optimizer.update(critic_grads, stepsize=self.critic_lr) # TODO: weirdly, this is okay
 
         return critic_loss, actor_loss
 
     def initialize(self, sess):
         self.sess = sess
         self.sess.run(tf.global_variables_initializer())
-        self.actor_optimizer.sync()
-        self.critic_optimizer.sync()
+        # self.actor_optimizer.sync()
+        # self.critic_optimizer.sync()
         self.sess.run(self.target_init_updates)
 
     def update_target_net(self):
