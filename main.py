@@ -19,7 +19,7 @@ from mpi4py import MPI
 
 from environment.particle import ParticleEnv
 
-def run(env_id, seed, noise_type, layer_norm, evaluation, **kwargs):
+def run(env_id, seed, noise_type, layer_norm, evaluation, use_vision, **kwargs):
     # Configure things.
     rank = MPI.COMM_WORLD.Get_rank()
     if rank != 0:
@@ -52,15 +52,17 @@ def run(env_id, seed, noise_type, layer_norm, evaluation, **kwargs):
 
     # Configure components.
     # TODO: Change back to 1e6
+
+    observation_shape = (100, 100, 3) if use_vision else env.observation_space["observation"].shape
     
     memory = Memory(limit=int(1e2),
                     state_shape=env.observation_space["observation"].shape,
                     action_shape=env.action_space.shape,
-                    observation_shape=(100, 100, 3), # TODO: make flag
+                    observation_shape=observation_shape,
                     goal_shape=env.observation_space["desired_goal"].shape,
                     goalobs_shape=env.observation_space["desired_goal"].shape)
     critic = Critic(layer_norm=layer_norm)
-    actor = Actor(nb_actions, layer_norm=layer_norm)
+    actor = Actor(nb_actions, layer_norm=layer_norm, use_vision=use_vision)
 
     # Seed everything to make things reproducible.
     seed = seed + 1000000 * rank
@@ -78,7 +80,7 @@ def run(env_id, seed, noise_type, layer_norm, evaluation, **kwargs):
 
     kwargs.pop('state_shape')
     training.train(env=env, eval_env=eval_env, param_noise=param_noise,
-        action_noise=action_noise, actor=actor, critic=critic, memory=memory, use_vision=True, **kwargs)
+        action_noise=action_noise, actor=actor, critic=critic, memory=memory, use_vision=use_vision, **kwargs)
 
     env.close()
     if eval_env is not None:
@@ -114,6 +116,7 @@ def parse_args():
     parser.add_argument('--noise-type', type=str, default='none')  # choices are adaptive-param_xx, ou_xx, normal_xx, none
     parser.add_argument('--num-timesteps', type=int, default=None)
     boolean_flag(parser, 'evaluation', default=False)
+    parser.add_argument('--use_vision', action="store_true")
     args = parser.parse_args()
     # we don't directly specify timesteps for this script, so make sure that if we do specify them
     # they agree with the other parameters

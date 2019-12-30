@@ -20,26 +20,28 @@ class Model(object):
 
 
 class Actor(Model):
-    def __init__(self, nb_actions, name='actor', layer_norm=None):
+    def __init__(self, nb_actions, name='actor', layer_norm=None, use_vision=False):
         super(Actor, self).__init__(name=name)
         self.nb_actions = nb_actions
         self.layer_norm = layer_norm
+        self.use_vision = use_vision
 
     def __call__(self, obs, goalobs, reuse=False):
         with tf.variable_scope(self.name) as scope:
             if reuse:
                 scope.reuse_variables()
 
-            obs = tf.reshape(obs, [-1, 100, 100, 3])
+            if self.use_vision:
+                obs = tf.reshape(obs, [-1, 100, 100, 3])
 
-            for i in range(0, 4):
-                obs = tf.layers.conv2d(
-                    inputs=obs,
-                    filters=64,
-                    kernel_size=2,
-                )
+                for i in range(0, 4):
+                    obs = tf.layers.conv2d(
+                        inputs=obs,
+                        filters=64,
+                        kernel_size=2,
+                    )
 
-            obs = tf.layers.flatten(obs)
+                obs = tf.layers.flatten(obs)
             x = tf.concat([obs, goalobs], axis=-1)
 
             x = tf.layers.dense(x, 512)
