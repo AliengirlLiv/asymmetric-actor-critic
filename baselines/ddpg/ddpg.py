@@ -135,6 +135,13 @@ class DDPG(object):
         else:
             self.ret_rms = None
 
+        # Create target networks.
+        target_actor = deepcopy(actor) # TODO: copy?
+        target_actor.name = 'target_actor'
+        self.target_actor = target_actor
+        target_critic = deepcopy(critic)
+        target_critic.name = 'target_critic'
+        self.target_critic = target_critic
 
         # Create networks and core TF parts that are shared across setup parts.
         self.actor_tf = actor(normalized_obs0, normalized_goalobs) # TODO: [?, 4]
@@ -142,18 +149,6 @@ class DDPG(object):
         self.critic_tf = denormalize(tf.clip_by_value(self.normalized_critic_tf, self.return_range[0], self.return_range[1]), self.ret_rms)
         self.normalized_critic_with_actor_tf = critic(normalized_state0, normalized_goal, self.actor_tf, reuse=True)
         self.critic_with_actor_tf = denormalize(tf.clip_by_value(self.normalized_critic_with_actor_tf, self.return_range[0], self.return_range[1]), self.ret_rms)
-
-
-
-        # Create target networks.
-        self.setup_actor_optimizer() # TODO: figure out why this adds so many new vars to self.actor.vars
-        self.setup_critic_optimizer()
-        target_actor = deepcopy(actor)
-        # target_actor.name = 'target_actor'
-        self.target_actor = target_actor
-        target_critic = deepcopy(critic)
-        # target_critic.name = 'target_critic'
-        self.target_critic = target_critic
 
 
         Q_obs1 = denormalize(target_critic(normalized_state1, normalized_goal, target_actor(normalized_obs1, normalized_goalobs)), self.ret_rms)
@@ -166,6 +161,9 @@ class DDPG(object):
             self.setup_popart()
         self.setup_stats()
         self.setup_target_network_updates()
+
+        self.setup_actor_optimizer() # TODO: figure out why this adds so many new vars to self.actor.vars
+        self.setup_critic_optimizer()
 
     def setup_target_network_updates(self):
         actor_init_updates, actor_soft_updates = get_target_updates(self.actor.vars, self.target_actor.vars, self.tau)
@@ -333,7 +331,7 @@ class DDPG(object):
             # print(target_Q_new, target_Q, new_mean, new_std)
             # assert (np.abs(target_Q - target_Q_new) < 1e-3).all()
         else:
-            target_Q = self.sess.run(self.target_Q, feed_dict={ # TODO: Make this part less slow
+            target_Q = self.sess.run(self.target_Q, feed_dict={
                 self.state1: batch['state1'],
                 self.goal: batch['goal'],
                 self.goalobs: batch['goalobs'],
