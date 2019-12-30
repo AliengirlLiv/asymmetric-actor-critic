@@ -56,7 +56,8 @@ def get_perturbed_actor_updates(actor, perturbed_actor, param_noise_stddev):
 
 class DDPG(object):
     # TODO: Observation range
-    def __init__(self, actor, critic, memory, state_shape, observation_shape, action_shape, param_noise=None, action_noise=None,
+    def __init__(self, actor, critic, memory, state_shape, observation_shape, action_shape, goal_shape, goalobs_shape,
+        param_noise=None, action_noise=None,
         gamma=0.99, tau=0.001, normalize_returns=False, enable_popart=False, normalize_observations=True,
         batch_size=128, state_range=(-2, 2), observation_range=(0, 255), action_range=(-1., 1.), return_range=(-np.inf, np.inf),
         adaptive_param_noise=True, adaptive_param_noise_policy_threshold=.1,
@@ -68,8 +69,8 @@ class DDPG(object):
         self.state0 = tf.placeholder(tf.float32, shape=(None,) + state_shape, name='state0')
         self.state1 = tf.placeholder(tf.float32, shape=(None,) + state_shape, name='state1')
 
-        self.goal = tf.placeholder(tf.float32, shape=(None,) + state_shape, name='goal')
-        self.goalobs = tf.placeholder(tf.float32, shape=(None,) + observation_shape, name='goalobs')
+        self.goal = tf.placeholder(tf.float32, shape=(None,) + goal_shape, name='goal')
+        self.goalobs = tf.placeholder(tf.float32, shape=(None,) + goalobs_shape, name='goalobs')
 
         self.terminals1 = tf.placeholder(tf.float32, shape=(None, 1), name='terminals1')
         self.rewards = tf.placeholder(tf.float32, shape=(None, 1), name='rewards')
@@ -111,18 +112,19 @@ class DDPG(object):
                 self.state_rms = RunningMeanStd(shape=state_shape)
         else:
             self.obs_rms = None
+        self.goal_rms = None # TODO: implement this
 
         normalized_obs0 = tf.clip_by_value(normalize(self.obs0, self.obs_rms),
             self.observation_range[0], self.observation_range[1])
         normalized_obs1 = tf.clip_by_value(normalize(self.obs1, self.obs_rms),
             self.observation_range[0], self.observation_range[1])
-        normalized_goalobs = tf.clip_by_value(normalize(self.goalobs, self.obs_rms),
+        normalized_goalobs = tf.clip_by_value(normalize(self.goalobs, self.goal_rms),
             self.observation_range[0], self.observation_range[1])
         normalized_state0 = tf.clip_by_value(normalize(self.state0, self.state_rms),
             self.state_range[0], self.state_range[1])
         normalized_state1 = tf.clip_by_value(normalize(self.state1, self.state_rms),
             self.state_range[0], self.state_range[1])
-        normalized_goal = tf.clip_by_value(normalize(self.goal, self.state_rms),
+        normalized_goal = tf.clip_by_value(normalize(self.goal, self.goal_rms),
             self.state_range[0], self.state_range[1])
 
         # Return normalization.
@@ -141,7 +143,7 @@ class DDPG(object):
         self.target_critic = target_critic
 
         # Create networks and core TF parts that are shared across setup parts.
-        self.actor_tf = actor(normalized_obs0, normalized_goalobs)
+        self.actor_tf = actor(normalized_obs0, normalized_goalobs) # TODO: [?, 4]
         self.normalized_critic_tf = critic(normalized_state0, normalized_goal, self.actions)
         self.critic_tf = denormalize(tf.clip_by_value(self.normalized_critic_tf, self.return_range[0], self.return_range[1]), self.ret_rms)
         self.normalized_critic_with_actor_tf = critic(normalized_state0, normalized_goal, self.actor_tf, reuse=True)
@@ -269,12 +271,12 @@ class DDPG(object):
         self.stats_ops = ops
         self.stats_names = names
 
-    def pi(self, obs, goalobs, apply_noise=True, compute_Q=True):
+    def pi(self, obs, goalobs, state=None, apply_noise=True, compute_Q=True):
         if self.param_noise is not None and apply_noise:
             actor_tf = self.perturbed_actor_tf
         else:
             actor_tf = self.actor_tf
-        feed_dict = {self.obs0: [obs], self.goalobs: [goalobs]}
+        feed_dict = {self.obs0: [obs], self.goalobs: [goalobs], self.goal: [goalobs], self.state0: [state]} # TODO: make it possible for goal != goalobs
         if compute_Q:
             action, q = self.sess.run([actor_tf, self.critic_with_actor_tf], feed_dict=feed_dict)
         else:
@@ -325,7 +327,7 @@ class DDPG(object):
             # print(target_Q_new, target_Q, new_mean, new_std)
             # assert (np.abs(target_Q - target_Q_new) < 1e-3).all()
         else:
-            target_Q = self.sess.run(self.target_Q, feed_dict={
+            target_Q = self.sess.run(self.target_Q, feed_dict={ # TODO: Make this part less slow
                 self.state1: batch['state1'],
                 self.goal: batch['goal'],
                 self.goalobs: batch['goalobs'],
@@ -343,10 +345,10 @@ class DDPG(object):
             self.goal: batch['goal'],
             self.actions: batch['actions'],
             self.critic_target: target_Q,
-        })
+        }) # TODO: Make this part less slow
         
-        self.actor_optimizer.update(actor_grads, stepsize=self.actor_lr)
-        self.critic_optimizer.update(critic_grads, stepsize=self.critic_lr)
+        self.actor_optimizer.update(actor_grads, stepsize=self.actor_lr)  # TODO: Make this part less slow
+        self.critic_optimizer.update(critic_grads, stepsize=self.critic_lr) # TODO: weirdly, this is okay
 
         return critic_loss, actor_loss
 

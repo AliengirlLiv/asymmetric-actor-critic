@@ -11,18 +11,24 @@ from baselines import logger
 import numpy as np
 import tensorflow as tf
 from mpi4py import MPI
+import cv2
 
 
 def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, param_noise, actor, critic,
     normalize_returns, normalize_observations, critic_l2_reg, actor_lr, critic_lr, action_noise,
     popart, gamma, clip_norm, nb_train_steps, nb_rollout_steps, nb_eval_steps, batch_size, memory,
-    tau=0.01, eval_env=None, param_noise_adaption_interval=50):
+    tau=0.01, eval_env=None, param_noise_adaption_interval=50, use_vision=False):
     rank = MPI.COMM_WORLD.Get_rank()
 
     assert (np.abs(env.action_space.low) == env.action_space.high).all()  # we assume symmetric actions.
     max_action = env.action_space.high
     logger.info('scaling actions by {} before executing in env'.format(max_action))
-    agent = DDPG(actor, critic, memory, env.state_space.shape, env.observation_space.shape, env.action_space.shape,
+    if use_vision:
+        obs_shape = (100, 100, 3) # TODO: make adjustable
+    else:
+        obs_shape = env.observation_space["observation"].shape
+    agent = DDPG(actor, critic, memory, env.observation_space["observation"].shape, obs_shape,
+                 env.action_space.shape, env.observation_space["desired_goal"].shape, env.observation_space["desired_goal"].shape,
         gamma=gamma, tau=tau, normalize_returns=normalize_returns, normalize_observations=normalize_observations,
         batch_size=batch_size, action_noise=action_noise, param_noise=param_noise, critic_l2_reg=critic_l2_reg,
         actor_lr=actor_lr, critic_lr=critic_lr, enable_popart=popart, clip_norm=clip_norm,
@@ -47,9 +53,10 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
 
         agent.reset()
         
-        obs = env.reset()
-        goal = env.reset_goalstate()
-        goalobs = env.reset_goalobs()
+        obs_dict = env.reset()
+        obs = obs_dict
+        goal = obs_dict["desired_goal"]
+        goalobs = obs_dict["desired_goal"]
 
         if eval_env is not None:
             eval_obs = eval_env.reset()
@@ -72,13 +79,20 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
         epoch_qs = []
         epoch_episodes = 0
         for epoch in range(nb_epochs):
+            print("starting epoch", epoch, "of", nb_epochs)
             for cycle in range(nb_epoch_cycles):
+                print("   starting rollout", cycle, "of", nb_epoch_cycles)
                 # Perform rollouts.
                 for t_rollout in range(nb_rollout_steps):
+                    print("      starting step", t_rollout, "of", nb_rollout_steps)
                     # Predict next action.
-                    action, q = agent.pi(obs, goalobs, apply_noise=True, compute_Q=True)
-                    state = env.get_state()
-                    
+                    if use_vision:
+                        obs_train = obs["pixels"]
+                        obs_train = cv2.resize(obs_train, (100, 100))
+                    else : #TODO: Make this take correct shape
+                        obs_train = obs["observation"]
+                    action, q = agent.pi(obs_train, goalobs, state=obs["observation"], apply_noise=True, compute_Q=True)
+
                     assert action.shape == env.action_space.shape
 
                     # Execute next action.
@@ -87,7 +101,11 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
 
                     assert max_action.shape == action.shape
                     new_obs, r, done, info = env.step(max_action * action)  # scale for execution in env (as far as DDPG is concerned, every action is in [-1, 1])
-                    new_state = env.get_state()
+                    if use_vision:
+                        new_obs_train = new_obs["pixels"]
+                        new_obs_train = cv2.resize(new_obs_train, (100, 100))
+                    else : #TODO: Make this take correct shape
+                        new_obs_train = new_obs["observation"]
 
                     t += 1
                     if rank == 0 and render:
@@ -98,7 +116,7 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
                     # Book-keeping.
                     epoch_actions.append(action)
                     epoch_qs.append(q)
-                    agent.store_transition(obs, action, r, new_obs, done, state, new_state, goal, goalobs)
+                    agent.store_transition(obs_train, action, r, new_obs_train, done, obs["observation"], new_obs["observation"], goal, goalobs)
                     obs = new_obs
 
                     if done:
@@ -112,15 +130,17 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
                         episodes += 1
 
                         agent.reset()
-                        obs = env.reset()
-                        goal = env.reset_goalstate()
-                        goalobs = env.reset_goalobs()
+                        obs_dict = env.reset()
+                        obs = obs_dict
+                        goal = obs_dict["desired_goal"]
+                        goalobs = obs_dict["desired_goal"]
 
                 # Train.
                 epoch_actor_losses = []
                 epoch_critic_losses = []
                 epoch_adaptive_distances = []
                 for t_train in range(nb_train_steps):
+                    print("   >>> starting train step", t_train, "of", nb_train_steps)
                     # Adapt param noise, if necessary.
                     if memory.nb_entries >= batch_size and t % param_noise_adaption_interval == 0:
                         distance = agent.adapt_param_noise()
@@ -135,9 +155,17 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
                 eval_episode_rewards = []
                 eval_qs = []
                 if eval_env is not None:
+                    eval_obs = eval_env.reset()
+                    goalobs = eval_obs["desired_goal"]
                     eval_episode_reward = 0.
                     for t_rollout in range(nb_eval_steps):
-                        eval_action, eval_q = agent.pi(eval_obs, goalobs, apply_noise=False, compute_Q=True)
+                        print("   >>> starting eval step", t_rollout, "of", nb_eval_steps)
+                        if use_vision:
+                            eval_obs_train = eval_obs["pixels"]
+                            eval_obs_train = cv2.resize(eval_obs_train, (100, 100))
+                        else:  # TODO: Make this take correct shape
+                            eval_obs_train = eval_obs["observation"]
+                        eval_action, eval_q = agent.pi(eval_obs_train, goalobs, apply_noise=False, compute_Q=True)
                         eval_obs, eval_r, eval_done, eval_info = eval_env.step(max_action * eval_action)  # scale for execution in env (as far as DDPG is concerned, every action is in [-1, 1])
                         if render_eval:
                             eval_env.render()
@@ -146,6 +174,7 @@ def train(env, nb_epochs, nb_epoch_cycles, render_eval, reward_scale, render, pa
                         eval_qs.append(eval_q)
                         if eval_done:
                             eval_obs = eval_env.reset()
+                            goalobs = eval_obs["desired_goal"]
                             eval_episode_rewards.append(eval_episode_reward)
                             eval_episode_rewards_history.append(eval_episode_reward)
                             eval_episode_reward = 0.

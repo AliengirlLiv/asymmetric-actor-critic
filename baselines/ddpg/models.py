@@ -31,7 +31,6 @@ class Actor(Model):
                 scope.reuse_variables()
 
             obs = tf.reshape(obs, [-1, 100, 100, 3])
-            goalobs = tf.reshape(goalobs, [-1, 100, 100, 3])
 
             for i in range(0, 4):
                 obs = tf.layers.conv2d(
@@ -40,15 +39,8 @@ class Actor(Model):
                     kernel_size=2,
                 )
 
-            for i in range(0, 4):
-                goalobs = tf.layers.conv2d(
-                    inputs=goalobs,
-                    filters=64,
-                    kernel_size=2,
-                )  
-
+            obs = tf.layers.flatten(obs)
             x = tf.concat([obs, goalobs], axis=-1)
-            x = tf.layers.flatten(x)
 
             x = tf.layers.dense(x, 512)
             x = tf.nn.relu(x)
@@ -75,7 +67,7 @@ class Critic(Model):
             if reuse:
                 scope.reuse_variables()
 
-            print(state.shape, goal.shape, action.shape)
+            print("SHAPES", state.shape, goal.shape, action.shape)
             x = tf.concat([state, goal, action], axis=-1)
 
             x = tf.layers.dense(x, 512)

@@ -7,7 +7,6 @@ class RingBuffer(object):
         self.start = 0
         self.length = 0
 
-        print(shape, maxlen)
         self.data = np.zeros((maxlen,) + shape).astype(dtype)
 
     def __len__(self):
@@ -42,7 +41,7 @@ def array_min2d(x):
 
 
 class Memory(object):
-    def __init__(self, limit, state_shape, action_shape, observation_shape):
+    def __init__(self, limit, state_shape, action_shape, observation_shape, goal_shape, goalobs_shape):
         self.limit = limit
 
         self.observations0 = RingBuffer(limit, shape=observation_shape, dtype='uint8')
@@ -53,8 +52,8 @@ class Memory(object):
 
         self.states = RingBuffer(limit, shape=state_shape)
         self.states1 = RingBuffer(limit, shape=state_shape)
-        self.goals = RingBuffer(limit, shape=state_shape)
-        self.goal_observations = RingBuffer(limit, shape=observation_shape, dtype='uint8')
+        self.goals = RingBuffer(limit, shape=goal_shape)
+        self.goal_observations = RingBuffer(limit, shape=goalobs_shape, dtype='uint8')
         
 
     def sample(self, batch_size):
@@ -68,7 +67,7 @@ class Memory(object):
         terminal1_batch = self.terminals1.get_batch(batch_idxs)
 
         states0_batch = self.states.get_batch(batch_idxs)
-        states1_batch - self.states.get_batch(batch_idxs)
+        states1_batch = self.states1.get_batch(batch_idxs)
         goals_batch = self.goals.get_batch(batch_idxs)
         goalobs_batch = self.goal_observations.get_batch(batch_idxs)
 
@@ -79,7 +78,7 @@ class Memory(object):
             'actions': array_min2d(action_batch),
             'terminals1': array_min2d(terminal1_batch),
             'state0': array_min2d(states0_batch),
-            'state10': array_min2d(states1_batch),
+            'state1': array_min2d(states1_batch),
             'goal': array_min2d(goals_batch),
             'goalobs': array_min2d(goalobs_batch)
         }

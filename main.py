@@ -13,6 +13,7 @@ from baselines.ddpg.memory import Memory
 from baselines.ddpg.noise import *
 
 import gym
+from gym.wrappers.pixel_observation import PixelObservationWrapper
 import tensorflow as tf
 from mpi4py import MPI
 
@@ -26,6 +27,7 @@ def run(env_id, seed, noise_type, layer_norm, evaluation, **kwargs):
 
     # Create envs.
     env = gym.make(env_id)
+    env = PixelObservationWrapper(env, pixels_only=False)
     eval_env = None
 
     # Parse noise_type
@@ -51,7 +53,12 @@ def run(env_id, seed, noise_type, layer_norm, evaluation, **kwargs):
     # Configure components.
     # TODO: Change back to 1e6
     
-    memory = Memory(limit=int(1e2), state_shape=env.state_space.shape, action_shape=env.action_space.shape, observation_shape=env.observation_space.shape)
+    memory = Memory(limit=int(1e2),
+                    state_shape=env.observation_space["observation"].shape,
+                    action_shape=env.action_space.shape,
+                    observation_shape=(100, 100, 3), # TODO: make flag
+                    goal_shape=env.observation_space["desired_goal"].shape,
+                    goalobs_shape=env.observation_space["desired_goal"].shape)
     critic = Critic(layer_norm=layer_norm)
     actor = Actor(nb_actions, layer_norm=layer_norm)
 
@@ -71,7 +78,7 @@ def run(env_id, seed, noise_type, layer_norm, evaluation, **kwargs):
 
     kwargs.pop('state_shape')
     training.train(env=env, eval_env=eval_env, param_noise=param_noise,
-        action_noise=action_noise, actor=actor, critic=critic, memory=memory, **kwargs)
+        action_noise=action_noise, actor=actor, critic=critic, memory=memory, use_vision=True, **kwargs)
 
     env.close()
     if eval_env is not None:
@@ -83,7 +90,7 @@ def run(env_id, seed, noise_type, layer_norm, evaluation, **kwargs):
 def parse_args():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-    parser.add_argument('--env-id', type=str, default='Particle-v0')
+    parser.add_argument('--env-id', type=str, default='FetchSlide-v1')
     boolean_flag(parser, 'render-eval', default=False)
     boolean_flag(parser, 'layer-norm', default=True)
     boolean_flag(parser, 'render', default=False)
